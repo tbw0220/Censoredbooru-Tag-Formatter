@@ -1,0 +1,175 @@
+// ==UserScript==
+// @name        Copy Tags from Danbooru
+// @version     1.2
+// @description gets tags from danbooru
+// @authors		exo (original), tbw (updates)
+// @match       http://censored.booru.org/index.php?page=post*
+// @grant       GM_xmlhttpRequest
+// @grant       GM_openInTab
+// @run-at		document-end
+// ==/UserScript==
+
+var tagsToReplace = ["breasts censored_breasts", "ass censored_ass", "pussy censored_pussy"]; //add tags you want to replace here.
+var tagsToAdd = []; //add tags you want to add here.
+var tagsToRemove = ["bad_id", "bad_pixiv_id", "censored", "mosaic_censoring", "uncensored", "commentary", "commentary_request", "translated", "translation_request", "annotation_request", "source_request"]; //add tags you want to remove here.
+var openOriginal = true; // change this to "var openOriginal = false" if you don't want to open the original image in a new tab. Warning: this will make it harder to notice that iqdb has returned a wrong image with wrong tags.
+
+
+var iqdbTemplate = "http://danbooru.iqdb.org/?url=";
+var clicked = false;
+var danbooruURL;
+
+function initialize(){
+    var imageURL = getImageUrl();
+    console.log('url is: '+imageURL);
+    getDanbooruUrl(imageURL);
+}
+
+function getImageUrl(){
+    return document.getElementById("image").src;
+}
+
+function getDanbooruUrl(imageUrl){
+    var iqdbUrl = iqdbTemplate+imageUrl;
+    var req = new GM_xmlhttpRequest({
+        method: "GET",
+        url: iqdbUrl,
+        onload: function(){
+            console.log("parsing iqdb response");
+            var parser = new DOMParser();
+            var response = parser.parseFromString(this.responseText, "text/html");
+            resultNode = response.getElementById("pages").childNodes[2];
+            if(resultNode.innerHTML.includes("No relevant matches")){
+                resultNode = response.getElementById("pages").childNodes[5];
+            }
+            danbooruURL = resultNode.getElementsByTagName("a")[0].href;
+            getDanbooruTags(danbooruURL);
+        }
+    });
+}
+
+function getDanbooruTags(danbooruURL){
+    var req = new GM_xmlhttpRequest({
+        method: "GET",
+        url: danbooruURL,
+        onload: function(){
+            console.log("danbooru url: "+danbooruURL);
+            console.log("parsing danbooru tags");
+            var parser = new DOMParser();
+            var response = parser.parseFromString(this.responseText, "text/html");
+            tagList = response.getElementById("tag-list");
+            var copyrightTags = [];
+            var artistTags = [];
+            var characterTags = [];
+            var imageTags = [];
+			var metaTags = [];
+            var children = tagList.childNodes;
+            var tagsNotArray; //getElementsByClassName returns array-like object, but it doesn't have foreach method
+            for(var el in children){
+                if(children[el].nodeType == 1){
+                    if(children[el].innerHTML.includes("Copyrights")){
+                        tagsNotArray = children[el].nextSibling.getElementsByClassName("search-tag");
+                        for(i = 0; i < tagsNotArray.length; i++){
+                            copyrightTags.push("series:" + tagsNotArray[i].innerHTML.replace(/ /g, "_"));
+                        }
+                    }
+                    if(children[el].innerHTML.includes("Characters")){
+                        tagsNotArray = children[el].nextSibling.getElementsByClassName("search-tag");
+                        for(i = 0; i < tagsNotArray.length; i++){
+                            characterTags.push("character:"+tagsNotArray[i].innerHTML.replace(/ /g, "_"));
+                        }
+                    }
+                    if(children[el].innerHTML.includes("Artist")){
+                        tagsNotArray = children[el].nextSibling.getElementsByClassName("search-tag");
+                        for(i = 0; i < tagsNotArray.length; i++){
+                            artistTags.push("artist:"+tagsNotArray[i].innerHTML.replace(/ /g, "_"));
+                        }
+                    }
+                    if(children[el].innerHTML.includes("Tags")){
+                        tagsNotArray = children[el].nextSibling.getElementsByClassName("search-tag");
+                        for(i = 0; i < tagsNotArray.length; i++){
+                            imageTags.push(tagsNotArray[i].innerHTML.replace(/ /g, "_"));
+                        }
+                    }
+					if(children[el].innerHTML.includes("Meta")){
+                        tagsNotArray = children[el].nextSibling.getElementsByClassName("search-tag");
+                        for(i = 0; i < tagsNotArray.length; i++){
+                            imageTags.push(tagsNotArray[i].innerHTML.replace(/ /g, "_"));
+                        }
+                    }
+                }
+            }
+            tags = [copyrightTags, artistTags, characterTags, imageTags, metaTags];
+            replaceTags(tags);
+    }});
+}
+
+function replaceTags(tags){
+        console.log("adding tags to page");
+        var imageTags = tags[3];
+        for(var i = 0; i < tagsToReplace.length; i++){
+            var replaced = tagsToReplace[i].substr(0,tagsToReplace[i].indexOf(" "));
+            var replacement = tagsToReplace[i].substr(tagsToReplace[i].indexOf(" ") + 1);
+            if(imageTags.indexOf(replaced) != -1){
+                imageTags[imageTags.indexOf(replaced)] = replacement;
+            }
+        }
+        console.log(imageTags);
+        for(i = 0; i < tagsToRemove.length; i++){
+            var index = imageTags.indexOf(tagsToRemove[i]);
+            if(index > -1){
+                imageTags.splice(index, 1);
+            }
+        }
+        console.log(imageTags);
+        for(i = 0; i < tagsToAdd.length; i++){
+                imageTags.push(tagsToAdd[i]);
+        }
+        console.log(imageTags);
+        console.log(tags);
+
+		//remove tagme type tags
+		var originalTags = document.getElementById("tags").innerHTML;
+		originalTags = originalTags.replace("tagme", "");
+		if (tags[1].length > 0) {
+			originalTags = originalTags.replace("artist_request", "");
+		}
+		if (tags[2].length > 0 || tags[1].length > 0) {
+			originalTags = originalTags.replace("character_request", "");
+		}
+		document.getElementById("tags").innerHTML = originalTags;
+
+		//add new tags found
+        for(i = 0; i < tags.length; i++){
+            for(var j = 0; j < tags[i].length; j++){
+                var withSpace = " " + tags[i][j];
+                document.getElementById("tags").innerHTML += withSpace;
+            }
+        }
+    if(openOriginal){
+        GM_openInTab(danbooruURL);
+    }
+}
+
+function addButton(){
+    var separator = document.createTextNode(" | ");
+    var searchLink = document.createElement("a");
+    searchLink.innerHTML = "Danbooru tags";
+    searchLink.href = "#";
+    links = document.getElementsByTagName("a");
+    for(var i in links){
+        if(links[i].innerHTML == "Tag History"){
+            links[i].parentNode.insertBefore(separator, links[i].nextSibling);
+            links[i].parentNode.insertBefore(searchLink, links[i].nextSibling.nextSibling);
+        }
+    }
+    searchLink.addEventListener("click", function(){
+        if(!clicked){
+            clicked = true;
+            initialize();
+        }
+    });
+    console.log("added button");
+}
+
+addButton();
